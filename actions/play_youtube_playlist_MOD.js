@@ -6,7 +6,7 @@ module.exports = {
 // This is the name of the action displayed in the editor.
 //---------------------------------------------------------------------
 
-name: "Transfer Variable",
+name: "Play YouTube Playlist",
 
 //---------------------------------------------------------------------
 // Action Section
@@ -14,7 +14,15 @@ name: "Transfer Variable",
 // This is the section the action will fall into.
 //---------------------------------------------------------------------
 
-section: "Variable Things",
+section: "Audio Control",
+
+//---------------------------------------------------------------------
+// Requires Audio Libraries
+//
+// If 'true', this action requires audio libraries to run.
+//---------------------------------------------------------------------
+
+requiresAudioLibraries: true,
 
 //---------------------------------------------------------------------
 // Action Subtitle
@@ -23,8 +31,7 @@ section: "Variable Things",
 //---------------------------------------------------------------------
 
 subtitle: function(data) {
-	const storeTypes = ["", "Temp Variable", "Server Variable", "Global Variable"];
-	return `${storeTypes[parseInt(data.storage)]} (${data.varName}) -> ${storeTypes[parseInt(data.storage2)]} (${data.varName2})`;
+	return `${data.url}`;
 },
 
 //---------------------------------------------------------------------
@@ -35,17 +42,18 @@ subtitle: function(data) {
 //---------------------------------------------------------------------
 
 // Who made the mod (If not set, defaults to "DBM Mods")
-author: "DBM & MrGold", //THIS ACTION WAS BROKEN AF, WTF SRD???
+author: "ZockerNico",
 
 // The version of the mod (Defaults to 1.0.0)
 version: "1.9.5", //Added in 1.9.5
 
 // A short description to show on the mod line for this mod (Must be on a single line)
-short_description: "Transfer the Variable Value to another Variable",
+short_description: "This action will add every video from a youtube playlist to the queue.",
 
 // If it depends on any other mods by name, ex: WrexMODS if the mod uses something from WrexMods
-
-//---------------------------------------------------------------------
+depends_on_mods: [
+	{name:'WrexMods',path:'aaa_wrexmods_dependencies_MOD.js'}
+],
 
 //---------------------------------------------------------------------
 // Action Fields
@@ -55,7 +63,7 @@ short_description: "Transfer the Variable Value to another Variable",
 // are also the names of the fields stored in the action's JSON data.
 //---------------------------------------------------------------------
 
-fields: ["storage", "varName", "storage2", "varName2"],
+fields: ["url", "apikey", "seek", "volume", "passes", "bitrate", "results"],
 
 //---------------------------------------------------------------------
 // Command HTML
@@ -75,30 +83,45 @@ fields: ["storage", "varName", "storage2", "varName2"],
 
 html: function(isEvent, data) {
 	return `
-<div><p>This action has been modified by DBM Mods</p></div><br>
 <div>
-	<div style="float: left; width: 35%;">
-		Transfer Value From:<br>
-		<select id="storage" class="round" onchange="glob.variableChange(this, 'varNameContainer')">
-			${data.variables[1]}
-		</select>
+<p>
+	Made by ZockerNico.
+</p>
+</div><br>
+<div style="float: left; width: 105%;">
+	YouTube Playlist URL:<br>
+	<input id="url" class="round" type="text" value="https://www.youtube.com/playlist?list=PLkfg3Bt9RE055BeP8DeDZSUCYxeSLnobe"><br>
+</div>
+<div style="float: left; width: 105%;">
+	API Key:<br>
+	<input id="apikey" class="round" type="text" placeholder="Insert your YouTube Data V3 API Key..."><br>
+</div>
+<div style="float: left; width: 49%;">
+	Video Seek Positions:<br>
+	<input id="seek" class="round" type="text" value="0"><br>
+</div>
+<div style="float: right; width: 49%;">
+	Video Passes:<br>
+	<input id="passes" class="round" type="text" value="1">
+</div><br>
+<div style="float: left; display: table;">
+	<div style="display: table-cell;">
+		Video Volumes:<br>
+		<input id="volume" class="round" type="text">
 	</div>
-	<div id="varNameContainer" style="float: right; width: 60%;">
-		Variable Name:<br>
-		<input id="varName" class="round" type="text" list="variableList"><br>
+	<div style="display: table-cell;">
+		Video Bitrates:<br>
+		<input id="bitrate" class="round" type="text">
 	</div>
-</div><br><br><br>
-<div style="padding-top: 8px;">
-	<div style="float: left; width: 35%;">
-		Transfer Value To:<br>
-		<select id="storage2" name="second-list" class="round" onchange="glob.variableChange(this, 'varNameContainer2')">
-			${data.variables[1]}
-		</select>
+	<div style="display: table-cell;">
+		Max Results:<br>
+		<input id="results" class="round" type="text" placeholder="Leave blank 100...">
 	</div>
-	<div id="varNameContainer2" style="float: right; width: 60%;">
-		Variable Name:<br>
-		<input id="varName2" class="round" type="text" list="variableList2"><br>
-	</div>
+</div>
+<div style="float: left; width: 105%; padding-top: 8px;">
+	<p>
+		<br>You can leave "Volumes" & "Bitrates" blank for automatic.
+	</p>
 </div>`
 },
 
@@ -111,10 +134,6 @@ html: function(isEvent, data) {
 //---------------------------------------------------------------------
 
 init: function() {
-	const {glob, document} = this;
-
-	glob.variableChange(document.getElementById('storage'), 'varNameContainer');
-	glob.variableChange(document.getElementById('storage2'), 'varNameContainer2');
 },
 
 //---------------------------------------------------------------------
@@ -127,24 +146,63 @@ init: function() {
 
 action: function(cache) {
 	const data = cache.actions[cache.index];
+	const Audio = this.getDBM().Audio;
+	const WrexMODS = this.getWrexMods();
+	const ypi = WrexMODS.require('youtube-playlist-info');
+	const options = {};
 
-	const storage = parseInt(data.storage);
-	const varName = this.evalMessage(data.varName, cache);
-	const var1 = this.getVariable(storage, varName, cache);
-	if(!var1) {
-		this.callNextAction(cache);
-		return;
-	}
-
-	const storage2 = parseInt(data.storage2);
-	const varName2 = this.evalMessage(data.varName2, cache);
-	const var2 = this.getVariable(storage2, varName2, cache);
-	if(!var2) {
-		this.callNextAction(cache);
-		return;
-	}
-
-	this.storeValue(var1, storage2, varName2, cache);
+	//Check input
+	if(!data.url) {
+		return console.log('Please insert a playlist url!');
+	};
+	if(!data.apikey) {
+		return console.log('Please insert a api key!');
+	};
+	
+	//Load playlist
+	const playlist = this.evalMessage(data.url, cache);
+	const playlistID = playlist.slice(38);
+	var apikey = "";
+	if(data.apikey) {
+		apikey = this.evalMessage(data.apikey, cache);
+	};
+	var results = 100;
+	if(data.results) {
+		results = parseInt(this.evalMessage(data.results, cache));
+	};
+	const ypiOptions = {
+		maxResults: results
+	};
+	ypi(apikey, playlistID, ypiOptions).then(items => {
+		items.forEach(item=> {
+			var url = `https://www.youtube.com/watch?v=${item.resourceId.videoId}`;
+			//Set up options
+			if(data.seek) {
+				options.seek = parseInt(this.evalMessage(data.seek, cache));
+			};
+			if(data.volume) {
+				options.volume = parseInt(this.evalMessage(data.volume, cache)) / 100;
+			} else if(cache.server) {
+				options.volume = Audio.volumes[cache.server.id] || 0.5;
+			} else {
+				options.volume = 0.5;
+			};
+			if(data.passes) {
+				options.passes = parseInt(this.evalMessage(data.passes, cache));
+			};
+			if(data.bitrate) {
+				options.bitrate = parseInt(this.evalMessage(data.bitrate, cache));
+			} else {
+				options.bitrate = 'auto';
+			};
+			//Play URL
+			if(url) {
+				const info = ['yt', options, url];
+				Audio.addToQueue(info, cache);
+			};
+		});
+	}).catch(console.error);
+	
 	this.callNextAction(cache);
 },
 
